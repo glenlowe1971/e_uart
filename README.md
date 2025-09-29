@@ -43,13 +43,13 @@ With the history of how we got here in terms of typical UART controller register
 - Large Receive FIFO so the processor has time to read data and eliminate the possibility of dataloss.
 - Programmable receive FIFO threshold **with** timeout feature so the software doesn’t have to poll UART for status.
 - 8/32-bit receive data interface to give software the opportunity minimize bus transactions to receive data.
-- Visibility to Receive FIFO occupancy vs *not-full-bit* allows read data loop optimization. Eliminates the need to read a *not-full-bit* after each data read.
+- Visibility to Receive FIFO occupancy vs *not-empty-bit* allows read data loop optimization. Eliminates the need to read a *not-empty-bit* after each data read.
 
 # Theory of Operation
 
 ## UART Transmitter
 - The Baud Rate Counter which is clocked by the AXI-S clock determines the time interval for a single bit.
-- The host CPU initiates a transmit by writeing a 8-bit byte or a 32-bit word to the Transmit FIFO.
+- The host CPU initiates a transmit by writing a 8-bit byte or a 32-bit word to the Transmit FIFO.
 
 When the Transmit FIFO is not empty, the transmit state machine in uart_tx.v will perform the following as long as the Transmit FIFO is not empty.
 1. The transmit state machine will start sending the start bit by driving the TxD pin low. 
@@ -59,6 +59,16 @@ When the Transmit FIFO is not empty, the transmit state machine in uart_tx.v wil
 5. After the stop bit is clocked out. We clock out an addition stop bit for 1/2 the time interval specified by the Baud Rate Counter by driving TxD high and leaving TxD high. I'm currently not sure if this additional "gap" is actually needed. If it's not needed, it's a simple change to the state machine. 
 
 ## UART Receiver
+- The Oversample Rate Counter which is clocked by the AXI-S clock determines the time interval to sample the RxD pin.
+- This UART receiver only supports 1 start-bit, 8 data-bits and pretty much ignores the stop-bit.
+- RxD is oversampled at a rate of 5 times per bit. The samples are stored in a 45-bit shift register. (1 stop-bit, 8 data-bits = 9 bits. 9 bits * 5 samples per bit = 45-bits)
+
+The receiver operates roughly as follows:
+1. 45-bit shift register is initialized to all 1's
+2. RxD samples is shifted in from the left. RxD_sample <= {RxD, RxD_sample[44:1]}
+3. Look for RxD_sample[2:0] == 3'b001. This would indicate the beginning of the start-bit is at RxD[1].
+4. Since the start-bit is roughly at RxD_sample[5:1]. Assume that RxD_sample[(5*z)+2], where z = 1 thru 9 are safe samples to use to assemble the byte and push the byte into the receive FIFO.
+5. Delay for 45 Oversample Rate Counter time. Go to Step 2.
 
 # Register Interface
 ## List of registers
